@@ -1,0 +1,839 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, query, doc, setDoc, getDocs, Timestamp, where } from 'firebase/firestore';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+
+// Main App component for the workout tracker
+const App = () => {
+    // Define the workout plan with exercises, target sets, and target reps
+    // All exercises now have a target of 5 sets
+    const workoutPlan = {
+        'Dzień 1 - Góra ciała (push + pull)': [
+            { name: 'Wyciskanie na ławce płaskiej', targetSets: 5, targetReps: '4-10' },
+            { name: 'Rozpiętki na maszynie Butterfly', targetSets: 5, targetReps: '8-12' },
+            { name: 'Podciąganie na drążku z odciążeniem', targetSets: 5, targetReps: '8' },
+            { name: 'Wyciskanie sztangi stojąc (OHP)', targetSets: 5, targetReps: '8' },
+            { name: 'Wznosy boczne ramion z linką (leżąc)', targetSets: 5, targetReps: '10-12' },
+            { name: 'Ściąganie linki jednorącz', targetSets: 5, targetReps: '9' },
+            { name: 'Uginanie ramion na modlitewniku', targetSets: 5, targetReps: '6-10' },
+        ],
+        'Dzień 2 - Plecy, nogi, biceps, triceps': [
+            { name: 'Wiosłowanie na wyciągu siedząc', targetSets: 5, targetReps: '10' },
+            { name: 'Wiosłowanie na maszynie siedząc', targetSets: 5, targetReps: '12' },
+            // Dodano Martwy ciąg Rumuński (RDL)
+            { name: 'Martwy ciąg Rumuński (RDL)', targetSets: 5, targetReps: '8-12' },
+            { name: 'Wypychanie ciężaru nogami na suwnicy', targetSets: 5, targetReps: '10' },
+            { name: 'Wyciskanie francuskie (superseria)', targetSets: 5, targetReps: '12' },
+            { name: 'Uginanie na modlitewniku (superseria)', targetSets: 5, targetReps: '6-10' },
+            { name: 'Kółko na brzuch', targetSets: 5, targetReps: '10' },
+        ],
+        'Dzień 3 - Góra ciała (push + pull)': [
+            { name: 'Wyciskanie hantli na ławce skośnej', targetSets: 5, targetReps: '8-10' },
+            { name: 'Podciąganie na drążku z odciążeniem LUB ściąganie drążka do klatki', targetSets: 5, targetReps: '8-10' },
+            { name: 'Wznosy boczne ramion z linką (stojąc)', targetSets: 5, targetReps: '12' },
+            { name: 'Face Pull (przyciąganie liny do twarzy)', targetSets: 5, targetReps: '12-15' },
+            { name: 'Wypychanie ciężaru nogami na suwnicy (stopy niżej)', targetSets: 5, targetReps: '10' },
+            { name: 'Dipy na poręczach (superseria)', targetSets: 5, targetReps: '8-10' },
+            { name: 'Uginanie ramion z supinacją (sztanga łamana) (superseria)', targetSets: 5, targetReps: '10-12' },
+        ],
+    };
+
+    // Initial historical workout data for pre-populating the history
+    // These dates are arbitrary and can be adjusted by the user in the future
+    const hardcodedHistoricalWorkouts = [
+        // Day 1 - Week 1 (assuming Tuesday June 3rd, 2025)
+        {
+            id: 'hist1_day1_w1', date: '2025-06-03', day: 'Dzień 1 - Góra ciała (push + pull)',
+            exercises: [
+                { name: 'Wyciskanie na ławce płaskiej', sets: [{ weight: '70', reps: '10' }, { weight: '80', reps: '10' }, { weight: '85', reps: '4' }, { weight: '85', reps: '8' }, { weight: '', reps: '' }], note: 'Dłuższe przerwy pozwoliły na lepsze wyniki' },
+                { name: 'Rozpiętki na maszynie Butterfly', sets: [{ weight: '85', reps: '12' }, { weight: '85', reps: '10' }, { weight: '85', reps: '8' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Stabilna technika i ciężar' },
+                { name: 'Podciąganie na drążku z odciążeniem', sets: [{ weight: '13.75', reps: '8' }, { weight: '13.75', reps: '8' }, { weight: '13.75', reps: '8' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Kontynuujesz progresję' },
+                { name: 'Wyciskanie sztangi stojąc (OHP)', sets: [{ weight: '43', reps: '8' }, { weight: '43', reps: '8' }, { weight: '43', reps: '8' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Stabilny ciężar, dobra kontrola' },
+                { name: 'Wznosy boczne ramion z linką (leżąc)', sets: [{ weight: '10', reps: '10' }, { weight: '10', reps: '10' }, { weight: '10', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Dobra technika, stabilny ciężar' },
+                { name: 'Ściąganie linki jednorącz', sets: [{ weight: '12.5', reps: '9' }, { weight: '12.5', reps: '9' }, { weight: '12.5', reps: '9' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Dropset do 5 kg po seriach' },
+                { name: 'Uginanie ramion na modlitewniku', sets: [{ weight: '37', reps: '10' }, { weight: '37', reps: '8' }, { weight: '37', reps: '6' }, { weight: '30', reps: '6' }, { weight: '', reps: '' }], note: 'Dobra objętość, solidna praca nad bicepsem' },
+            ],
+        },
+        // Day 2 - Week 1 (assuming Thursday June 5th, 2025)
+        {
+            id: 'hist1_day2_w1', date: '2025-06-05', day: 'Dzień 2 - Plecy, nogi, biceps, triceps',
+            exercises: [
+                { name: 'Wiosłowanie na wyciągu siedząc', sets: [{ weight: '40', reps: '10' }, { weight: '40', reps: '10' }, { weight: '40', reps: '10' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Stabilna objętość, kontrola ruchu' },
+                { name: 'Wiosłowanie na maszynie siedząc', sets: [{ weight: '90', reps: '12' }, { weight: '90', reps: '12' }, { weight: '90', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Dobra technika' },
+                // Dodano Martwy ciąg Rumuński (RDL) jako pusty wpis w historii
+                { name: 'Martwy ciąg Rumuński (RDL)', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+                { name: 'Wypychanie ciężaru nogami na suwnicy', sets: [{ weight: '150', reps: '10' }, { weight: '170', reps: '10' }, { weight: '190', reps: '10' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Progresja ciężaru' },
+                { name: 'Wyciskanie francuskie (superseria)', sets: [{ weight: '25', reps: '12' }, { weight: '25', reps: '12' }, { weight: '25', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Superseria na triceps i biceps' },
+                { name: 'Uginanie na modlitewniku (superseria)', sets: [{ weight: '37', reps: '10' }, { weight: '37', reps: '8' }, { weight: '37', reps: '6' }, { weight: '30', reps: '6' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Kółko na brzuch', sets: [{ weight: '0', reps: '10' }, { weight: '0', reps: '10' }, { weight: '0', reps: '10' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Kontrola mięśni brzucha' },
+            ],
+        },
+        // Day 3 - Week 1 (assuming Saturday June 7th, 2025 - "other gym" day, no specific weights/reps noted)
+        {
+            id: 'hist1_day3_w1', date: '2025-06-07', day: 'Dzień 3 - Góra ciała (push + pull)',
+            exercises: [
+                { name: 'Wyciskanie hantli na ławce skośnej', sets: Array(5).fill({ weight: '', reps: '' }), note: 'Klatka piersiowa, barki' },
+                { name: 'Podciąganie na drążku z odciążeniem LUB ściąganie drążka do klatki', sets: Array(5).fill({ weight: '', reps: '' }), note: 'Plecy' },
+                { name: 'Wznosy boczne ramion z linką (stojąc)', sets: Array(5).fill({ weight: '', reps: '' }), note: 'Barki boczne' },
+                { name: 'Face Pull (przyciąganie liny do twarzy)', sets: [{ weight: '', reps: '12' }, { weight: '', reps: '12' }, { weight: '', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: 'Tylny akton barku' },
+                { name: 'Wypychanie ciężaru nogami na suwnicy (stopy niżej)', sets: Array(5).fill({ weight: '', reps: '' }), note: 'Uda przednie' },
+                { name: 'Dipy na poręczach (superseria)', sets: Array(5).fill({ weight: '', reps: '' }), note: 'Triceps + biceps' },
+                { name: 'Uginanie ramion z supinacją (sztanga łamana) (superseria)', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+            ],
+        },
+        // Day 1 - Week 2 (assuming Tuesday June 10th, 2025)
+        {
+            id: 'hist1_day1_w2', date: '2025-06-10', day: 'Dzień 1 - Góra ciała (push + pull)',
+            exercises: [
+                { name: 'Wyciskanie na ławce płaskiej', sets: [{ weight: '70', reps: '10' }, { weight: '80', reps: '10' }, { weight: '85', reps: '8' }, { weight: '90', reps: '4' }, { weight: '90', reps: '4' }], note: '' },
+                { name: 'Rozpiętki na maszynie Butterfly', sets: [{ weight: '85', reps: '12' }, { weight: '85', reps: '11' }, { weight: '85', reps: '9' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Podciąganie na drążku z odciążeniem', sets: [{ weight: '13.75', reps: '9' }, { weight: '13.75', reps: '8' }, { weight: '13.75', reps: '8' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Wyciskanie sztangi stojąc (OHP)', sets: [{ weight: '43', reps: '10' }, { weight: '43', reps: '10' }, { weight: '43', reps: '9' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Wznosy boczne ramion z linką (leżąc)', sets: [{ weight: '10', reps: '12' }, { weight: '10', reps: '12' }, { weight: '10', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }] },
+                { name: 'Ściąganie linki jednorącz', sets: [{ weight: '12.5', reps: '12' }, { weight: '', reps: '', }, { weight: '', reps: '' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Uginanie ramion na modlitewniku', sets: [{ weight: '38', reps: '10' }, { weight: '38', reps: '7.5' }, { weight: '38', reps: '7' }, { weight: '35', reps: '2.5' }, { weight: '', reps: '' }], note: '' },
+            ],
+        },
+        // Day 2 - Week 2 (assuming Thursday June 12th, 2025) - Using Week 1 data as no specific changes provided by user
+        {
+            id: 'hist1_day2_w2', date: '2025-06-12', day: 'Dzień 2 - Plecy, nogi, biceps, triceps',
+            exercises: [
+                { name: 'Wiosłowanie na wyciągu siedząc', sets: [{ weight: '40', reps: '10' }, { weight: '40', reps: '10' }, { weight: '40', reps: '10' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Wiosłowanie na maszynie siedząc', sets: [{ weight: '90', reps: '12' }, { weight: '90', reps: '12' }, { weight: '90', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                // Dodano Martwy ciąg Rumuński (RDL) jako pusty wpis w historii
+                { name: 'Martwy ciąg Rumuński (RDL)', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+                { name: 'Wypychanie ciężaru nogami na suwnicy', sets: [{ weight: '150', reps: '10' }, { weight: '170', reps: '10' }, { weight: '190', 'reps': '10' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Wyciskanie francuskie (superseria)', sets: [{ weight: '25', reps: '12' }, { weight: '25', reps: '12' }, { weight: '25', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Uginanie na modlitewniku (superseria)', sets: [{ weight: '37', reps: '10' }, { weight: '37', reps: '8' }, { weight: '37', reps: '6' }, { weight: '30', reps: '6' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Kółko na brzuch', sets: [{ weight: '0', reps: '10' }, { weight: '0', reps: '10' }, { weight: '0', reps: '10' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+            ],
+        },
+        // Day 3 - Week 2 (assuming Saturday June 14th, 2025 - "other gym" day, no specific weights/reps noted)
+        {
+            id: 'hist1_day3_w2', date: '2025-06-14', day: 'Dzień 3 - Góra ciała (push + pull)',
+            exercises: [
+                { name: 'Wyciskanie hantli na ławce skośnej', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+                { name: 'Podciąganie na drążku z odciążeniem LUB ściąganie drążka do klatki', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+                { name: 'Wznosy boczne ramion z linką (stojąc)', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+                { name: 'Face Pull (przyciąganie liny do twarzy)', sets: [{ weight: '', reps: '12' }, { weight: '', reps: '12' }, { weight: '', reps: '12' }, { weight: '', reps: '' }, { weight: '', reps: '' }], note: '' },
+                { name: 'Wypychanie ciężaru nogami na suwnicy (stopy niżej)', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+                { name: 'Dipy na poręczach (superseria)', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+                { name: 'Uginanie ramion z supinacją (sztanga łamana) (superseria)', sets: Array(5).fill({ weight: '', reps: '' }), note: '' },
+            ],
+        },
+    ];
+
+    // State for Firebase instances and user data
+    const [db, setDb] = useState(null);
+    const [auth, setAuth] = useState(null);
+    const [userId, setUserId] = useState(null);
+    const [appId, setAppId] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+
+    // State for workout data
+    const [currentDay, setCurrentDay] = useState(Object.keys(workoutPlan)[0]);
+    // Initialize loggedWorkouts with hardcoded data
+    const [loggedWorkouts, setLoggedWorkouts] = useState(hardcodedHistoricalWorkouts);
+    const [currentWorkoutData, setCurrentWorkoutData] = useState({});
+    const [showHistory, setShowHistory] = useState(false);
+    const [message, setMessage] = useState('');
+    // New state for selected date, initialized to today's date
+    const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
+
+    // New states for editing functionality
+    const [editingWorkoutId, setEditingWorkoutId] = useState(null);
+    const [editingWorkoutData, setEditingWorkoutData] = useState(null); // Stores the full workout object being edited
+
+
+    // Initialize Firebase and listen for auth state changes
+    useEffect(() => {
+        try {
+            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+            const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+            const firebaseApp = initializeApp(firebaseConfig);
+            const firestoreDb = getFirestore(firebaseApp);
+            const firebaseAuth = getAuth(firebaseApp);
+
+            setDb(firestoreDb);
+            setAuth(firebaseAuth);
+            setAppId(currentAppId);
+
+            onAuthStateChanged(firebaseAuth, async (user) => {
+                if (user) {
+                    setUserId(user.uid);
+                } else {
+                    // Sign in anonymously if no user is authenticated
+                    try {
+                        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(firebaseAuth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(firebaseAuth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase Auth Error:", error);
+                        showMessage(`Błąd autoryzacji: ${error.message}`, 'red');
+                    }
+                }
+                setIsLoading(false); // Auth is ready, stop loading
+            });
+        } catch (error) {
+            console.error("Error initializing Firebase:", error);
+            showMessage(`Błąd inicjalizacji Firebase: ${error.message}`, 'red');
+            setIsLoading(false); // Stop loading even on error
+        }
+    }, []);
+
+    // Fetch workouts from Firestore when db, userId, or appId change
+    useEffect(() => {
+        if (db && userId && appId) {
+            setIsLoading(true);
+            const workoutsCollectionPath = `artifacts/${appId}/users/${userId}/workouts`;
+            const q = query(collection(db, workoutsCollectionPath));
+
+            const unsubscribe = onSnapshot(q, (snapshot) => {
+                const fetchedWorkouts = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data(),
+                    date: doc.data().date instanceof Timestamp ? doc.data().date.toDate().toISOString().slice(0, 10) : doc.data().date
+                }));
+
+                const combinedWorkouts = [...hardcodedHistoricalWorkouts];
+                fetchedWorkouts.forEach(fetchedWorkout => {
+                    const existingIndex = combinedWorkouts.findIndex(
+                        hw => hw.date === fetchedWorkout.date && hw.day === fetchedWorkout.day
+                    );
+                    if (existingIndex > -1) {
+                        combinedWorkouts[existingIndex] = fetchedWorkout;
+                    } else {
+                        combinedWorkouts.push(fetchedWorkout);
+                    }
+                });
+
+                combinedWorkouts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+                setLoggedWorkouts(combinedWorkouts);
+                setIsLoading(false);
+            }, (error) => {
+                console.error("Error fetching workouts:", error);
+                showMessage(`Błąd pobierania treningów: ${error.message}`, 'red');
+                setIsLoading(false);
+            });
+
+            return () => unsubscribe(); // Cleanup listener on unmount
+        }
+    }, [db, userId, appId]);
+
+    // Initialize currentWorkoutData when currentDay changes
+    useEffect(() => {
+        const initialData = {};
+        workoutPlan[currentDay].forEach(exercise => {
+            initialData[exercise.name] = { sets: Array(5).fill({ weight: '', reps: '' }), note: '' };
+        });
+        setCurrentWorkoutData(initialData);
+    }, [currentDay]);
+
+    // Function to get the previous workout data for a specific exercise
+    const getPreviousExerciseData = (exerciseName) => {
+        const relevantWorkouts = loggedWorkouts
+            .filter(lw => lw.day === currentDay)
+            .reverse();
+
+        for (const workout of relevantWorkouts) {
+            const foundExercise = workout.exercises.find(ex => ex.name === exerciseName);
+            if (foundExercise) {
+                return foundExercise; // Return the whole exercise object (sets and note)
+            }
+        }
+        return null;
+    };
+
+    // Handle input change for a specific set of an exercise in NEW workout form
+    const handleSetInputChange = (exerciseName, setIndex, field, value) => {
+        setCurrentWorkoutData(prevData => {
+            const updatedExerciseDetail = { ...prevData[exerciseName] };
+            const updatedSets = [...updatedExerciseDetail.sets];
+            updatedSets[setIndex] = {
+                ...updatedSets[setIndex],
+                [field]: value
+            };
+            updatedExerciseDetail.sets = updatedSets;
+            return {
+                ...prevData,
+                [exerciseName]: updatedExerciseDetail
+            };
+        });
+    };
+
+    // Handle input change for the note of a specific exercise in NEW workout form
+    const handleExerciseNoteChange = (exerciseName, value) => {
+        setCurrentWorkoutData(prevData => ({
+            ...prevData,
+            [exerciseName]: {
+                ...prevData[exerciseName], // Use exerciseName correctly here
+                note: value
+            }
+        }));
+    };
+
+    // Handle input change for a specific set of an exercise IN EDITING form
+    const handleEditingSetInputChange = (exerciseName, setIndex, field, value) => {
+        setEditingWorkoutData(prevData => {
+            if (!prevData) return null; // Should not happen if editingWorkoutId is set
+
+            const updatedExercises = prevData.exercises.map(ex => {
+                if (ex.name === exerciseName) {
+                    // Ensure the sets array has enough elements, filling with empty if necessary
+                    const updatedSets = Array.from({ length: 5 }, (_, i) => ex.sets[i] || { weight: '', reps: '' });
+                    updatedSets[setIndex] = {
+                        ...updatedSets[setIndex],
+                        [field]: value
+                    };
+                    return { ...ex, sets: updatedSets };
+                }
+                return ex;
+            });
+            return { ...prevData, exercises: updatedExercises };
+        });
+    };
+
+    // Handle input change for the note of a specific exercise IN EDITING form
+    const handleEditingExerciseNoteChange = (exerciseName, value) => {
+        setEditingWorkoutData(prevData => {
+            if (!prevData) return null;
+
+            const updatedExercises = prevData.exercises.map(ex => {
+                if (ex.name === exerciseName) {
+                    return { ...ex, note: value };
+                }
+                return ex;
+            });
+            return { ...prevData, exercises: updatedExercises };
+        });
+    };
+
+    // SAVE SINGLE EXERCISE function (replaces old saveWorkout logic for input form)
+    const saveSingleExercise = async (exerciseName) => {
+        if (!db || !userId || !appId) {
+            showMessage('Baza danych nie jest gotowa. Proszę poczekać lub odświeżyć.', 'red');
+            return;
+        }
+
+        const exerciseDetail = currentWorkoutData[exerciseName];
+        const sets = exerciseDetail.sets.filter(set => set.weight !== '' || set.reps !== '');
+        const note = exerciseDetail.note.trim();
+
+        if (sets.length === 0 && note === '') {
+            showMessage('Nie wprowadzono żadnych danych dla tego ćwiczenia!', 'red');
+            return;
+        }
+
+        const exerciseToSave = {
+            name: exerciseName,
+            sets: sets,
+            note: note
+        };
+
+        try {
+            setIsLoading(true);
+            const workoutsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/workouts`);
+            const q = query(
+                workoutsCollectionRef,
+                where('date', '==', selectedDate),
+                where('day', '==', currentDay)
+            );
+            const querySnapshot = await getDocs(q);
+
+            if (!querySnapshot.empty) {
+                // Workout for this date and day already exists, update it
+                const existingWorkoutDoc = querySnapshot.docs[0];
+                const existingWorkoutData = existingWorkoutDoc.data();
+                const workoutDocRef = doc(db, workoutsCollectionRef.id, existingWorkoutDoc.id);
+
+                let updatedExercises = existingWorkoutData.exercises || [];
+                const existingExerciseIndex = updatedExercises.findIndex(ex => ex.name === exerciseName);
+
+                if (existingExerciseIndex > -1) {
+                    // Update existing exercise
+                    updatedExercises[existingExerciseIndex] = exerciseToSave;
+                } else {
+                    // Add new exercise
+                    updatedExercises = [...updatedExercises, exerciseToSave];
+                }
+
+                // Ensure no empty exercises are saved (if a user clears all sets/notes of an existing one)
+                updatedExercises = updatedExercises.filter(ex => ex.sets.length > 0 || (ex.note && ex.note.trim() !== ''));
+
+                await setDoc(workoutDocRef, { exercises: updatedExercises }, { merge: true });
+                showMessage(`Ćwiczenie "${exerciseName}" zaktualizowane pomyślnie!`, 'green');
+            } else {
+                // No workout for this date and day, create a new one
+                const newWorkout = {
+                    date: selectedDate,
+                    day: currentDay,
+                    exercises: [exerciseToSave],
+                    createdAt: Timestamp.now()
+                };
+                await addDoc(workoutsCollectionRef, newWorkout);
+                showMessage(`Ćwiczenie "${exerciseName}" zapisane w nowym treningu!`, 'green');
+            }
+
+            // Clear the input fields for the just saved exercise
+            setCurrentWorkoutData(prevData => ({
+                ...prevData,
+                [exerciseName]: { sets: Array(5).fill({ weight: '', reps: '' }), note: '' }
+            }));
+
+        } catch (error) {
+            console.error("Error saving exercise:", error);
+            showMessage(`Błąd zapisu ćwiczenia: ${error.message}`, 'red');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+
+    // Update an existing workout in Firestore (used by history edit button)
+    const updateWorkout = async () => {
+        if (!db || !userId || !appId || !editingWorkoutData || !editingWorkoutId) {
+            showMessage('Błąd: Brak danych do aktualizacji lub baza danych nie jest gotowa.', 'red');
+            return;
+        }
+
+        const workoutRef = doc(db, `artifacts/${appId}/users/${userId}/workouts`, editingWorkoutId);
+        const updatedExercisesData = editingWorkoutData.exercises.map(ex => {
+            // Filter out empty sets before saving, and ensure note is trim-ed
+            const filteredSets = ex.sets.filter(set => set.weight !== '' || set.reps !== '');
+            return {
+                name: ex.name,
+                sets: filteredSets,
+                note: ex.note ? ex.note.trim() : '' // Ensure note is trimmed, empty string if null/undefined
+            };
+        }).filter(ex => ex.sets.length > 0 || ex.note !== ''); // Only save exercises with data or a note
+
+        if (updatedExercisesData.length === 0) {
+            showMessage('Brak danych do zapisania w treningu po edycji. Trening zostanie usunięty.', 'orange');
+            // If all exercises are empty, it means the user cleared everything, so delete the workout
+            try {
+                setIsLoading(true);
+                // Need to import deleteDoc from firebase/firestore if not already imported
+                const { deleteDoc } = await import('firebase/firestore');
+                await deleteDoc(workoutRef); 
+                showMessage('Trening usunięty pomyślnie!', 'green');
+            } catch (error) {
+                console.error("Error deleting workout:", error);
+                showMessage(`Błąd usuwania treningu: ${error.message}`, 'red');
+            } finally {
+                setIsLoading(false);
+            }
+            setEditingWorkoutId(null);
+            setEditingWorkoutData(null);
+            return;
+        }
+
+        const dataToUpdate = {
+            date: editingWorkoutData.date, // Keep the original date
+            day: editingWorkoutData.day,   // Keep the original day
+            exercises: updatedExercisesData,
+            // Preserve createdAt timestamp or update to current if desired
+            // For now, let's keep the original createdAt unless explicitly changed
+            createdAt: editingWorkoutData.createdAt || Timestamp.now()
+        };
+
+        try {
+            setIsLoading(true);
+            await setDoc(workoutRef, dataToUpdate, { merge: false }); // Use merge: false to overwrite completely
+            showMessage('Trening zaktualizowany pomyślnie!', 'green');
+            setEditingWorkoutId(null); // Exit editing mode
+            setEditingWorkoutData(null); // Clear editing data
+        } catch (error) {
+            console.error("Error updating workout:", error);
+            showMessage(`Błąd aktualizacji treningu: ${error.message}`, 'red');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Function to cancel editing
+    const cancelEdit = () => {
+        setEditingWorkoutId(null);
+        setEditingWorkoutData(null);
+    };
+
+    // Show a temporary message to the user
+    const showMessage = (msg, type) => {
+        setMessage({ text: msg, type: type });
+        setTimeout(() => {
+            setMessage('');
+        }, 3000); // Message disappears after 3 seconds
+    };
+
+    // Function to prepare data for charts
+    const prepareChartData = (exerciseName) => {
+        const data = [];
+        // Filter workouts for the current day and given exercise, then sort by date ascending
+        const relevantWorkouts = loggedWorkouts
+            .filter(lw => lw.day === currentDay)
+            .filter(lw => lw.exercises.some(ex => ex.name === exerciseName))
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+        relevantWorkouts.forEach(workout => {
+            const exerciseData = workout.exercises.find(ex => ex.name === exerciseName);
+            if (exerciseData && exerciseData.sets.length > 0) {
+                // Find the maximum weight for this exercise on this date
+                const maxWeight = Math.max(...exerciseData.sets.map(set => parseFloat(set.weight) || 0));
+                // Add a data point only if a valid weight was recorded
+                if (maxWeight > 0) {
+                    data.push({
+                        date: workout.date,
+                        'Maks. ciężar (kg)': maxWeight,
+                    });
+                }
+            }
+        });
+        return data;
+    };
+
+    // Render loading state if data is not ready
+    if (isLoading) {
+        return (
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center font-inter">
+                <p className="text-xl text-gray-700">Ładowanie danych...</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-gray-100 p-4 font-inter">
+            {/* Tailwind CSS CDN */}
+            <script src="https://cdn.tailwindcss.com"></script>
+            {/* Inter font from Google Fonts */}
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+            <style>
+                {`
+                body {
+                    font-family: 'Inter', sans-serif;
+                }
+                /* Custom scrollbar for better aesthetics */
+                ::-webkit-scrollbar {
+                    width: 8px;
+                    height: 8px;
+                }
+                ::-webkit-scrollbar-track {
+                    background: #f1f1f1;
+                    border-radius: 10px;
+                }
+                ::-webkit-scrollbar-thumb {
+                    background: #888;
+                    border-radius: 10px;
+                }
+                ::-webkit-scrollbar-thumb:hover {
+                    background: #555;
+                }
+                `}
+            </style>
+
+            <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-6 md:p-8">
+                <h1 className="text-3xl md:text-4xl font-bold text-center text-gray-800 mb-6">
+                    Mój Monitor Treningu 💪
+                </h1>
+
+                {/* Display User ID */}
+                {userId && (
+                    <p className="text-sm text-gray-500 text-center mb-4">
+                        ID Użytkownika: <span className="font-mono text-gray-700 break-all">{userId}</span>
+                    </p>
+                )}
+
+                {/* Message Box */}
+                {message && (
+                    <div className={`p-3 mb-4 rounded-md text-center ${message.type === 'green' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                        {message.text}
+                    </div>
+                )}
+
+                {/* Day Selection and View Toggle */}
+                <div className="flex flex-col sm:flex-row justify-between items-center mb-6 space-y-4 sm:space-y-0 sm:space-x-4">
+                    <div className="flex-grow">
+                        <label htmlFor="workout-day-select" className="block text-gray-700 font-medium mb-2">
+                            Wybierz dzień treningowy:
+                        </label>
+                        <select
+                            id="workout-day-select"
+                            className="block w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            value={currentDay}
+                            onChange={(e) => {
+                                setCurrentDay(e.target.value);
+                                setShowHistory(false); // Switch back to input view when day changes
+                                setEditingWorkoutId(null); // Exit editing mode if day changes
+                                setEditingWorkoutData(null);
+                            }}
+                        >
+                            {Object.keys(workoutPlan).map((day) => (
+                                <option key={day} value={day}>
+                                    {day}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <button
+                        onClick={() => setShowHistory(!showHistory)}
+                        className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold rounded-lg shadow-md hover:from-blue-600 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-300"
+                    >
+                        {showHistory ? 'Wprowadź Trening' : 'Pokaż Historię'}
+                    </button>
+                </div>
+
+                {/* Date Selection for current workout */}
+                {!showHistory && (
+                    <div className="mb-6">
+                        <label htmlFor="workout-date-input" className="block text-gray-700 font-medium mb-2">
+                            Data treningu:
+                        </label>
+                        <input
+                            type="date"
+                            id="workout-date-input"
+                            className="block w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            value={selectedDate}
+                            onChange={(e) => setSelectedDate(e.target.value)}
+                        />
+                    </div>
+                )}
+
+                {/* Conditional rendering for workout input or history */}
+                {showHistory ? (
+                    <div className="mt-8">
+                        <h2 className="text-2xl font-semibold text-gray-800 mb-4">Historia Treningów dla dnia: <span className="text-blue-600">{currentDay}</span></h2>
+                        {/* Display Charts for each exercise */}
+                        <div className="space-y-8 mb-8">
+                            {workoutPlan[currentDay].map(exercise => {
+                                const chartData = prepareChartData(exercise.name);
+                                // Only render chart if there's at least 2 data points for a line
+                                if (chartData.length >= 2) {
+                                    return (
+                                        <div key={`chart-${exercise.name}`} className="bg-white p-4 rounded-lg shadow-md border border-gray-200">
+                                            <h3 className="text-xl font-bold text-gray-700 mb-4 text-center">{exercise.name} - Progres ciężaru</h3>
+                                            <ResponsiveContainer width="100%" height={300}>
+                                                <LineChart
+                                                    data={chartData}
+                                                    margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                                                >
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                                                    <XAxis dataKey="date" />
+                                                    <YAxis label={{ value: 'Ciężar (kg)', angle: -90, position: 'insideLeft' }} />
+                                                    <Tooltip />
+                                                    <Legend />
+                                                    <Line type="monotone" dataKey="Maks. ciężar (kg)" stroke="#8884d8" activeDot={{ r: 8 }} />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })}
+                        </div>
+
+                        {/* List of historical workouts */}
+                        <h2 className="text-2xl font-semibold text-gray-800 mb-4 mt-8">Szczegóły treningów</h2>
+                        {loggedWorkouts
+                            .filter(workout => workout.day === currentDay) // Filter by currentDay
+                            .length === 0 ? (
+                            <p className="text-gray-600 text-center py-8">Brak zapisanych treningów dla tego dnia.</p>
+                        ) : (
+                            <div className="space-y-6">
+                                {loggedWorkouts
+                                    .filter(workout => workout.day === currentDay) // Filter by currentDay
+                                    .map((workout, index) => (
+                                    <div key={workout.id || index} className="bg-blue-50 p-5 rounded-lg shadow-sm border border-blue-200">
+                                        <h3 className="text-lg font-bold text-blue-800 mb-3">
+                                            {workout.date}
+                                            {/* Edit Button for each workout */}
+                                            {editingWorkoutId !== workout.id && ( // Show edit button only if not currently editing this workout
+                                                <button
+                                                    onClick={() => {
+                                                        setEditingWorkoutId(workout.id);
+                                                        setEditingWorkoutData(JSON.parse(JSON.stringify(workout))); // Deep copy to avoid direct state mutation
+                                                    }}
+                                                    className="ml-4 px-3 py-1 bg-blue-500 text-white text-sm rounded-md hover:bg-blue-600 transition duration-200"
+                                                >
+                                                    Edytuj
+                                                </button>
+                                            )}
+                                        </h3>
+                                        {editingWorkoutId === workout.id ? (
+                                            // Render editable form for this workout
+                                            <div className="space-y-4">
+                                                {workoutPlan[currentDay].map((exerciseDef) => { // Use exerciseDef from workoutPlan for targetSets
+                                                    const currentExerciseInEdit = editingWorkoutData?.exercises.find(ex => ex.name === exerciseDef.name);
+                                                    // Ensure setsToDisplay always has 5 elements, pre-filling with empty if currentExerciseInEdit has fewer
+                                                    const setsToDisplay = Array.from({ length: 5 }, (_, i) =>
+                                                        currentExerciseInEdit && currentExerciseInEdit.sets[i] ? currentExerciseInEdit.sets[i] : { weight: '', reps: '' }
+                                                    );
+                                                    const noteToDisplay = currentExerciseInEdit ? currentExerciseInEdit.note : '';
+
+                                                    return (
+                                                        <div key={exerciseDef.name} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                                                            <h4 className="text-lg font-semibold text-gray-700 mb-2">{exerciseDef.name}</h4>
+                                                            <div className="grid grid-cols-2 gap-3">
+                                                                {Array.from({ length: 5 }).map((_, setIndex) => ( // Always render 5 input fields for editing
+                                                                    <div key={setIndex} className="flex items-center space-x-2">
+                                                                        <span className="font-medium text-gray-600">Seria {setIndex + 1}:</span>
+                                                                        <input
+                                                                            type="number"
+                                                                            placeholder="Ciężar (kg)"
+                                                                            className="w-1/2 p-2 border border-gray-300 rounded-md"
+                                                                            value={setsToDisplay[setIndex]?.weight || ''}
+                                                                            onChange={(e) => handleEditingSetInputChange(exerciseDef.name, setIndex, 'weight', e.target.value)}
+                                                                        />
+                                                                        <input
+                                                                            type="number"
+                                                                            placeholder="Powt."
+                                                                            className="w-1/2 p-2 border border-gray-300 rounded-md"
+                                                                            value={setsToDisplay[setIndex]?.reps || ''}
+                                                                            onChange={(e) => handleEditingSetInputChange(exerciseDef.name, setIndex, 'reps', e.target.value)}
+                                                                        />
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                            <div className="mt-3">
+                                                                <label htmlFor={`edit-note-${exerciseDef.name}-${workout.id}`} className="block text-gray-700 text-sm font-medium mb-1">
+                                                                    Notatki:
+                                                                </label>
+                                                                <textarea
+                                                                    id={`edit-note-${exerciseDef.name}-${workout.id}`}
+                                                                    placeholder="Dodaj notatki do tego ćwiczenia..."
+                                                                    rows="2"
+                                                                    className="w-full p-2 border border-gray-300 rounded-md"
+                                                                    value={noteToDisplay}
+                                                                    onChange={(e) => handleEditingExerciseNoteChange(exerciseDef.name, e.target.value)}
+                                                                ></textarea>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                <div className="flex justify-end space-x-3 mt-4">
+                                                    <button
+                                                        onClick={updateWorkout}
+                                                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition duration-200"
+                                                    >
+                                                        Zapisz Zmiany
+                                                    </button>
+                                                    <button
+                                                        onClick={cancelEdit}
+                                                        className="px-4 py-2 bg-gray-400 text-white rounded-md hover:bg-gray-500 transition duration-200"
+                                                    >
+                                                        Anuluj
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            // Render display mode for this workout
+                                            <ul className="space-y-2">
+                                                {workout.exercises.map((exercise, exIndex) => (
+                                                    <li key={exIndex} className="text-gray-700">
+                                                        <span className="font-medium">{exercise.name}:</span>
+                                                        <ul className="list-disc list-inside ml-4 mt-1">
+                                                            {exercise.sets.map((set, setIndex) => (
+                                                                <li key={setIndex}>{set.weight} kg x {set.reps} powt.</li>
+                                                            ))}
+                                                        </ul>
+                                                        {exercise.note && exercise.note.trim() !== '' && (
+                                                            <p className="text-sm italic text-gray-600 mt-2 ml-4">
+                                                                Notatki: {exercise.note}
+                                                            </p>
+                                                        )}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div>
+                        <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+                            Wprowadź dane treningowe dla: <span className="text-blue-600">{currentDay}</span>
+                        </h2>
+                        <div className="space-y-8">
+                            {workoutPlan[currentDay].map((exercise) => (
+                                <div key={exercise.name} className="bg-gray-50 p-6 rounded-lg shadow-sm border border-gray-200">
+                                    <h3 className="text-xl font-bold text-gray-700 mb-3">
+                                        {exercise.name} <span className="text-sm text-gray-500 font-normal">({exercise.targetSets} serie, {exercise.targetReps} powt.)</span>
+                                    </h3>
+
+                                    {/* Previous workout data display */}
+                                    {getPreviousExerciseData(exercise.name) && (
+                                        <div className="mb-4 p-3 bg-yellow-50 rounded-md border border-yellow-200 text-yellow-800">
+                                            <p className="font-medium">Poprzedni trening:</p>
+                                            {getPreviousExerciseData(exercise.name)?.sets?.map((set, idx) => (
+                                                <span key={idx} className="mr-3 text-sm">
+                                                    {set.weight} kg x {set.reps} powt.
+                                                </span>
+                                            ))}
+                                            {getPreviousExerciseData(exercise.name)?.note && getPreviousExerciseData(exercise.name).note.trim() !== '' && (
+                                                <p className="text-sm italic mt-1">
+                                                    Notatki: {getPreviousExerciseData(exercise.name).note}
+                                                </p>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Input fields for current workout */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {Array.from({ length: exercise.targetSets }).map((_, setIndex) => (
+                                            <div key={setIndex} className="flex items-center space-x-2">
+                                                <span className="font-medium text-gray-600">Seria {setIndex + 1}:</span>
+                                                <input
+                                                    type="number"
+                                                    placeholder="Ciężar (kg)"
+                                                    className="w-1/2 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                                    value={currentWorkoutData[exercise.name]?.sets?.[setIndex]?.weight || ''}
+                                                    onChange={(e) => handleSetInputChange(exercise.name, setIndex, 'weight', e.target.value)}
+                                                />
+                                                <input
+                                                    type="number"
+                                                    placeholder="Powt."
+                                                    className="w-1/2 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                                    value={currentWorkoutData[exercise.name]?.sets?.[setIndex]?.reps || ''}
+                                                    onChange={(e) => handleSetInputChange(exercise.name, setIndex, 'reps', e.target.value)}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {/* Note input for the exercise */}
+                                    <div className="mt-4">
+                                        <label htmlFor={`note-${exercise.name}`} className="block text-gray-700 font-medium mb-2">
+                                            Notatki do ćwiczenia:
+                                        </label>
+                                        <textarea
+                                            id={`note-${exercise.name}`}
+                                            placeholder="Dodaj notatki do tego ćwiczenia..."
+                                            rows="3"
+                                            className="w-full p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                            value={currentWorkoutData[exercise.name]?.note || ''}
+                                            onChange={(e) => handleExerciseNoteChange(exercise.name, e.target.value)}
+                                        ></textarea>
+                                    </div>
+                                    {/* Save Single Exercise Button */}
+                                    <button
+                                        onClick={() => saveSingleExercise(exercise.name)}
+                                        className="mt-4 w-full px-4 py-2 bg-purple-600 text-white font-semibold rounded-md shadow-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75 transition duration-300"
+                                    >
+                                        Zapisz to ćwiczenie
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default App;
